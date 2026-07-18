@@ -1,0 +1,39 @@
+version: "1"
+
+package:
+  id: org.deepin.community.AgentPlayground
+  name: deepin-agent-playground
+  version: 0.1.0
+  kind: app
+  description: |
+    deepin 25 上的 RL agent option 学习训练场
+    把 Sutton 路线第三步"长程 option"变成可测量训练数据
+  license: MIT
+
+base: org.deepin.base/23.0.0
+
+runtime:
+  env:
+    - PATH=/usr/local/bin:/usr/bin:/bin
+    - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
+
+command:
+  - /opt/apps/org.deepin.community.AgentPlayground/files/bin/deepin-agent-playground
+
+build:
+  manual: true
+
+sources:
+  - kind: local
+    url: file:///opt/deepin-agent-playground
+
+# 打包前需要先 make build 生成二进制到 ./bin/
+build_commands:
+  - cd /opt/deepin-agent-playground
+  - make build
+  - cp bin/deepin-agent-playground .
+
+# 文件布局
+files:
+  - src: deepin-agent-playground
+    dst: /opt/apps/org.deepin.community.AgentPlayground/files/bin/

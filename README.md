@@ -1,9 +1,75 @@
-# deepin-agent-playground · 技术方案 v0.2
+# deepin-agent-playground
 
-> 状态：方案设计阶段 · 待审核
-> 日期：2026-07-18
-> 目标：把 deepin 25 变成 Sutton 路线"option 学习"的真实环境
-> **更新：v0.2 · 技术栈升级为 Go + Eino（字节跳动 CloudWeGo 开源框架）**
+> 把 deepin 25 变成 Sutton 路线"option 学习"的真实环境
+>
+> **版本**：v0.2 MVP · 2026-07-18
+>
+> **技术栈**：Go 1.22+ · godbus/dbus（与 deepin 同款）· 玲珑包
+>
+> **状态**：Phase 1 MVP 已实现 · 3 个 tool + 1 个 e2e demo + 完整测试
+
+---
+
+## 快速开始
+
+```bash
+# 构建
+make build
+
+# 跑 demo（dry-run 模式，无需 deepin 25 环境）
+make demo-dry
+
+# 跑测试
+make test
+
+# 玲珑包打包（需要 deepin 25 + ll-builder）
+make linglong
+```
+
+## 项目结构
+
+```
+deepin-agent-playground/
+├── cmd/playground/main.go              # 入口
+├── internal/
+│   ├── agent/core.go                   # Agent 主循环（reasoning + acting）
+│   ├── tools/
+│   │   ├── base.go                     # Tool 抽象基类 + Result 统一结构
+│   │   ├── ll_cli.go                   # 玲珑包适配（install / run）
+│   │   ├── filesystem.go               # 文件整理（机器可读反馈）
+│   │   └── dde_wallpaper.go            # DDE 壁纸（D-Bus via godbus）
+│   ├── metrics/collector.go            # 训练数据采集
+│   └── config/config.go                # 配置加载
+├── examples/demo_install_organize_wallpaper.go  # e2e demo
+├── tests/                              # 测试
+├── Makefile                            # 构建脚本
+├── linglong.yaml                       # 玲珑包配置
+├── go.mod / go.sum
+└── README.md
+```
+
+## MVP 实现的 3 个 tool
+
+| Tool | 适配层 | Sutton 价值 |
+|------|--------|------------|
+| `ll_cli_install` | 玲珑包 install | 真实环境反馈（exit code）|
+| `filesystem_move_by_ext` | 文件操作 | before/after 状态对比 = 可验证奖励 |
+| `dde_wallpaper_set` | DDE Appearance D-Bus | 跨进程状态修改 + 二次读取验证 |
+
+## 演示场景
+
+**用户输入**：`帮我装计算器，整理 ~/Downloads 按扩展名分类，把壁纸换成日落`
+
+**Agent 拆解**：
+- option 1: `ll_cli_install` 安装 `org.deepin.calculator`
+- option 2: `filesystem_move_by_ext` 按扩展名整理下载文件
+- option 3: `dde_wallpaper_set` 设置壁纸
+
+**输出**：每步执行结果 + 整体 metrics 报告（成功率 / 平均耗时 / 错误类型分布）
+
+---
+
+## 详细设计
 
 ---
 
