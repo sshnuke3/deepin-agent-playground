@@ -560,18 +560,7 @@ deepin 用户双击 `.layer` 文件即装。
 
 ---
 
-## 8. 开放问题（需主人决策）
-
-1. **目标用户**：deepin 终端用户 / deepin 开发者 / RL 研究者？—— **影响 prompt 复杂度和文档重点**
-2. **代码托管**：GitHub linuxdeepin 组织 / 个人 fork？—— **影响社区可见度**
-3. **合作意向**：要不要先联系 deepin 团队（邮件/微信）？—— **影响方向是否跑偏**
-4. **时间投入**：主人想要 MVP 1 周内上线 / 还是慢慢打磨？—— **影响 Phase 1 范围**
-5. **是否开源**：MIT / GPL / 暂不开源？—— **影响代码风格和文档要求**
-6. **Eino 版本**：锁定 v0.3.21 / 还是跟 master？—— **影响稳定性 vs 新特性**
-
----
-
-## 9. 参考资料
+## 8. 参考资料
 
 - [deepin 25 发行注记](https://www.deepin.org/zh/deepin-25-alpha-release/)
 - [玲珑官方文档](https://www.linglong.space/)
