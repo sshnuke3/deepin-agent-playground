@@ -2,11 +2,21 @@
 
 > 把 deepin 25 变成 Sutton 路线"option 学习"的真实环境
 >
-> **版本**：v0.3 MVP · 2026-07-18（Phase 2：Eino 接入）
+> **版本**：v0.3 MVP · 2026-07-18（Phase 2：Eino 接入 + 与 deepin-agent-teams 统一）
 >
-> **技术栈**：Go 1.22+ · Eino v0.9.12 ADK · godbus/dbus · 玲珑包
+> **技术栈**：Go 1.22.2 · Eino v0.9.12 ADK · godbus/dbus · 玲珑包
 >
 > **状态**：Phase 2 已实现 · 3 个 tool + 双模式 agent（Eino / Legacy） + 完整测试
+
+## 与 deepin-agent-teams 版本对齐
+
+本项目与 [deepin-agent-teams](https://github.com/sshnuke3/deepin-agent-teams) v4-redesign 保持一致：
+
+- **Go 版本**：`go 1.22.2`（与 teams 一致 · 兼容 deepin 25 默认 Go）
+- **Eino**：`v0.9.12`（与 teams 一致）
+- **Sonic**：`v1.15.0` + `loader v0.5.0`（与 teams 一致）
+
+可以共享代码模式 + 同一工具链部署。
 
 ---
 

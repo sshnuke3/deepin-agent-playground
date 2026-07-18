@@ -1,14 +1,15 @@
 # daplayground Makefile
 # 支持：原生构建 + 玲珑包打包 + Eino / Legacy 双模式
 
-# 默认构建（不含 Eino，避免 sonic loader 链接问题）
+# 默认构建（包含 Eino 模式，sandbox 友好）
 .PHONY: build
 build:
 	CGO_ENABLED=0 go build -o bin/playground ./cmd/playground
 	CGO_ENABLED=0 go build -o bin/demo ./examples
-	@echo "✓ built: bin/playground (4.6M) + bin/demo (4.5M)"
+	CGO_ENABLED=0 go build -tags eino -o bin/playground-eino ./cmd/playground
+	@echo "✓ built: bin/playground + bin/playground-eino + bin/demo"
 
-# Eino 模式构建（需要 deepin 25 + Go 1.22 + sonic v1.13）
+# 只构建 Eino 模式
 .PHONY: build-eino
 build-eino:
 	CGO_ENABLED=0 go build -tags eino -o bin/playground-eino ./cmd/playground
