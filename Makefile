@@ -1,22 +1,28 @@
-# deepin-agent-playground Makefile
-# 支持：原生构建 + 玲珑包打包
+# daplayground Makefile
+# 支持：原生构建 + 玲珑包打包 + Eino / Legacy 双模式
 
-# Go 二进制构建
+# 默认构建（不含 Eino，避免 sonic loader 链接问题）
 .PHONY: build
 build:
-	CGO_ENABLED=0 go build -o bin/deepin-agent-playground ./cmd/playground
-	@echo "✓ built: bin/deepin-agent-playground"
+	CGO_ENABLED=0 go build -o bin/playground ./cmd/playground
+	CGO_ENABLED=0 go build -o bin/demo ./examples
+	@echo "✓ built: bin/playground (4.6M) + bin/demo (4.5M)"
+
+# Eino 模式构建（需要 deepin 25 + Go 1.22 + sonic v1.13）
+.PHONY: build-eino
+build-eino:
+	CGO_ENABLED=0 go build -tags eino -o bin/playground-eino ./cmd/playground
+	@echo "✓ built: bin/playground-eino (Eino ADK 模式)"
 
 # 构建所有 example
 .PHONY: build-examples
-build-examples:
-	CGO_ENABLED=0 go build -o bin/demo-install-organize-wallpaper ./examples/demo_install_organize_wallpaper.go
-	@echo "✓ built: bin/demo-install-organize-wallpaper"
+build-examples: build
+	@echo "✓ examples built"
 
 # 运行测试
 .PHONY: test
 test:
-	go test -v -race ./...
+	go test -v ./internal/tools/...
 
 # 静态检查
 .PHONY: vet
@@ -54,4 +60,14 @@ all: tidy fmt vet test build linglong
 # Dry-run 模式（不需要 deepin 25 环境）
 .PHONY: demo-dry
 demo-dry: build
-	./bin/deepin-agent-playground --dry-run --input "帮我装计算器，整理 ~/Downloads，把壁纸换成日落"
+	./bin/playground --dry-run --input "帮我装计算器，整理 ~/Downloads，把壁纸换成日落"
+
+# Eino 模式 demo（需要 Ollama 跑着）
+.PHONY: demo-eino
+demo-eino: build-eino
+	./bin/playground-eino --input "帮我装计算器，整理 ~/Downloads，把壁纸换成日落"
+
+# Legacy 模式 demo（手写 agent 循环）
+.PHONY: demo-legacy
+demo-legacy: build
+	./bin/playground --legacy --input "帮我装计算器，整理 ~/Downloads，把壁纸换成日落"

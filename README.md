@@ -2,22 +2,31 @@
 
 > 把 deepin 25 变成 Sutton 路线"option 学习"的真实环境
 >
-> **版本**：v0.2 MVP · 2026-07-18
+> **版本**：v0.3 MVP · 2026-07-18（Phase 2：Eino 接入）
 >
-> **技术栈**：Go 1.22+ · godbus/dbus（与 deepin 同款）· 玲珑包
+> **技术栈**：Go 1.22+ · Eino v0.9.12 ADK · godbus/dbus · 玲珑包
 >
-> **状态**：Phase 1 MVP 已实现 · 3 个 tool + 1 个 e2e demo + 完整测试
+> **状态**：Phase 2 已实现 · 3 个 tool + 双模式 agent（Eino / Legacy） + 完整测试
 
 ---
 
 ## 快速开始
 
 ```bash
-# 构建
+# 默认构建（不含 Eino · sandbox 友好）
 make build
 
-# 跑 demo（dry-run 模式，无需 deepin 25 环境）
+# Eino 模式构建（需要 deepin 25 + Go 1.22）
+make build-eino
+
+# Dry-run demo（无需 deepin 25 环境）
 make demo-dry
+
+# Legacy 模式 demo（手写 agent 循环）
+make demo-legacy
+
+# Eino 模式 demo（需要 Ollama 跑着）
+make demo-eino
 
 # 跑测试
 make test

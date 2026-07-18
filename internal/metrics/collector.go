@@ -53,6 +53,15 @@ func (c *Collector) Record(toolName string, r *tools.Result) {
 	})
 }
 
+// Records 返回所有记录（只读拷贝）
+func (c *Collector) Records() []Record {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]Record, len(c.records))
+	copy(out, c.records)
+	return out
+}
+
 // Report 输出最终报告
 func (c *Collector) Report() string {
 	c.mu.Lock()
