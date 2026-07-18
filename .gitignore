@@ -1,0 +1,40 @@
+# Build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config (with credentials)
+.env
+.env.local
+
+# Build outputs
+/bin/
+/dist/
+*.layer
+
+# Coverage
+coverage.txt
+*.cover
