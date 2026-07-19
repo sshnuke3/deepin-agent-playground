@@ -6,7 +6,7 @@
 >
 > **技术栈**：Go 1.22.2 · Eino v0.9.12 ADK · godbus/dbus · 玲珑包
 >
-> **状态**：Phase 2 已实现 · 3 个 tool + 双模式 agent（Eino / Legacy） + 完整测试
+> **状态**：Phase 2 已实现 · 7 个 DDE/系统 tool + 双模式 agent（Eino / Legacy） + 完整测试
 
 ## 与 deepin-agent-teams 版本对齐
 
@@ -67,13 +67,24 @@ deepin-agent-playground/
 └── README.md
 ```
 
-## MVP 实现的 3 个 tool
+## MVP 实现的 7 个 tool
+
+### Phase 1 (3 个 · MVP)
 
 | Tool | 适配层 | Sutton 价值 |
 |------|--------|------------|
 | `ll_cli_install` | 玲珑包 install | 真实环境反馈（exit code）|
 | `filesystem_move_by_ext` | 文件操作 | before/after 状态对比 = 可验证奖励 |
 | `dde_wallpaper_set` | DDE Appearance D-Bus | 跨进程状态修改 + 二次读取验证 |
+
+### Phase 2 补 (4 个 · DDE 主题/音量/亮度/WiFi)
+
+| Tool | 适配层 | Sutton 价值 |
+|------|--------|------------|
+| `dde_theme_set` | DDE Appearance.SetCurrentTheme | 深色 / 浅色 / 自动切换 · 可读回验证 |
+| `dde_volume_set` | DDE Audio.SinkSetVolume(0.0-1.0) | 输入 0-100 整数，内部转 ratio |
+| `dde_brightness_set` | DDE Display.SetBrightness(0.0-1.0) | 输入 0-100 整数，内部转 ratio |
+| `dde_network_wifi_toggle` | DDE Network.EnableWifi/DisableWifi | WiFi 开关 · ⚠️ 会断网 |
 
 ## 演示场景
 
@@ -268,19 +279,20 @@ deepin-agent-playground/
 │       └── main.go                     # 入口
 ├── internal/
 │   ├── agent/
-│   │   ├── core.go                     # Eino ADK Agent 主循环
-│   │   ├── graph.go                    # Eino Graph 定义（任务拆解）
-│   │   └── prompts.go                  # Prompt 模板
+│   │   ├── core.go                     # Legacy agent 主循环（关键词拆任务）
+│   │   ├── eino_agent.go               # Eino v0.9.12 ADK agent
+│   │   └── prompts.go                  # Prompt 模板（如需）
 │   ├── tools/
-│   │   ├── base.go                     # Tool 抽象基类
-│   │   ├── ll_cli.go                   # 玲珑包工具（install/run/list）
-│   │   ├── dde_wallpaper.go            # DDE 壁纸（D-Bus via godbus）
-│   │   ├── dde_files.go                # DDE 文件管理器（D-Bus）
-│   │   ├── dde_network.go              # DDE 网络设置（D-Bus）
-│   │   ├── dde_theme.go                # DDE 主题/外观（D-Bus）
-│   │   └── filesystem.go               # 文件读写移动
-│   ├── dbus/
-│   │   └── helper.go                   # godbus 通用调用 helper
+│   │   ├── base.go                     # Tool 接口 + Result 结构
+│   │   ├── adapter.go                  # Tool ↔ eino Tool 适配器
+│   │   ├── ll_cli.go                   # 玲珑包工具（Phase 1）
+│   │   ├── filesystem.go               # 文件整理（Phase 1）
+│   │   ├── dde_wallpaper.go            # DDE 壁纸（Phase 1）
+│   │   ├── dde_theme.go                # DDE 主题（Phase 2 补）
+│   │   ├── dde_volume.go               # DDE 音量（Phase 2 补）
+│   │   ├── dde_brightness.go           # DDE 亮度（Phase 2 补）
+│   │   └── dde_network.go              # DDE WiFi（Phase 2 补）
+│   ├── dbus/                           # （未来 godbus 通用调用 helper）
 │   ├── metrics/
 │   │   ├── collector.go                # 收集每次工具调用的结果
 │   │   └── reporter.go                 # 报告成功率/延迟
@@ -526,12 +538,12 @@ deepin 用户双击 `.layer` 文件即装。
 
 ## 6. 工作量估算
 
-| 阶段 | 时间 | 产出 |
-|------|------|------|
-| **Phase 1 · MVP** | 1-2 天 | 3 个 tool + 1 个 e2e demo + 1 个 metrics 报表 |
-| **Phase 2 · 完善** | 3-5 天 | + 7 个 DDE tool + Eino Graph 复杂工作流 + 文档 |
-| **Phase 3 · 训练数据** | 5-7 天 | + 自动采集 option 数据 + 导出 RL 数据集 |
-| **Phase 4 · 社区** | 1 天 | 发 deepin 论坛 + 开源仓库 + README |
+| 阶段 | 时间 | 状态 | 产出 |
+|------|------|------|------|
+| **Phase 1 · MVP** | 1-2 天 | ✅ 已完成 | 3 个 tool + 1 个 e2e demo + 1 个 metrics 报表 |
+| **Phase 2 · 完善** | 3-5 天 | ✅ 已完成 | + 4 个 DDE tool（theme/volume/brightness/network）+ Eino Graph + 文档 |
+| **Phase 3 · 训练数据** | 5-7 天 | ❌ 未启动 | + 自动采集 option 数据 + 导出 RL 数据集 |
+| **Phase 4 · 社区** | 1 天 | ❌ 未启动 | 发 deepin 论坛 + 开源仓库 + README |
 
 **总投入**：~2 周（如果主人有空协作可以压缩到 1 周）
 
