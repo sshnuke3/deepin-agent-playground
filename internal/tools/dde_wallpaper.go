@@ -1,3 +1,14 @@
+// Package tools - dde_wallpaper.go
+//
+// v0.3 Phase 2 升级:壁纸(走 gdbus 命令 + CommandExecutor 可注入)
+//
+// 跟 v4 teams/internal/tools/dbus.go 风格一致,playground 自己也用同一套。
+//
+// D-Bus: com.deepin.daemon.Appearance
+//   - Set(string key, string value) 例如 Set("background", "/path/to/wallpaper.jpg")
+//   - Get(string key) -> string
+//
+// 验证：设置后 Get 对比请求值（机器可读的成功判定）。
 package tools
 
 import (
@@ -5,35 +16,23 @@ import (
 	"fmt"
 	"os"
 	"time"
-
-	"github.com/godbus/dbus/v5"
 )
 
-// DDE Wallpaper / Appearance D-Bus 服务常量
+// DDE Wallpaper / Appearance D-Bus 常量
 const (
 	appearanceDest      = "com.deepin.daemon.Appearance"
 	appearancePath      = "/com/deepin/daemon/Appearance"
 	appearanceInterface = "com.deepin.daemon.Appearance"
-	propertyBackground  = appearanceInterface + ".background"
-	methodSet           = appearanceInterface + ".Set"
-	methodGet           = appearanceInterface + ".Get"
+	methodAppearanceSet = appearanceInterface + ".Set"
+	methodAppearanceGet = appearanceInterface + ".Get"
 )
 
 // DdeWallpaper 设置 / 获取 DDE 桌面壁纸。
-//
-// 通过 D-Bus 调用 com.deepin.daemon.Appearance 服务（与 deepin 团队同款库）。
-// 验证：设置后读取当前壁纸，对比请求值——机器可读的成功判定。
-type DdeWallpaper struct {
-	conn *dbus.Conn
-}
+type DdeWallpaper struct{}
 
 // NewDdeWallpaper 创建 DDE 壁纸工具
 func NewDdeWallpaper() (*DdeWallpaper, error) {
-	conn, err := dbus.SessionBus()
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to session D-Bus: %w", err)
-	}
-	return &DdeWallpaper{conn: conn}, nil
+	return &DdeWallpaper{}, nil
 }
 
 func (d *DdeWallpaper) Name() string { return "dde_wallpaper_set" }
@@ -63,9 +62,8 @@ func (d *DdeWallpaper) Run(ctx context.Context, input map[string]interface{}) (*
 		}, nil
 	}
 
-	// 3. 调用 DDE Appearance.Set
-	obj := d.conn.Object(appearanceDest, appearancePath)
-	err := obj.CallWithContext(ctx, methodSet, 0, "background", path).Err
+	// 3. 调用 DDE Appearance.Set("background", path)
+	_, err := dbusCall(ctx, appearanceDest, appearancePath, methodAppearanceSet, "background", path)
 	if err != nil {
 		return &Result{
 			Success: false, Error: err.Error(), ErrorType: "dbus_error",
@@ -74,20 +72,13 @@ func (d *DdeWallpaper) Run(ctx context.Context, input map[string]interface{}) (*
 		}, nil
 	}
 
-	// 4. 验证：读取当前壁纸对比
-	currentVariant, err := obj.GetProperty(propertyBackground)
-	if err != nil {
-		return &Result{
-			Success: false, Error: err.Error(), ErrorType: "dbus_error",
-			Content: "DDE Get failed",
-			Meta: map[string]interface{}{
-				"requested": path,
-			},
-			Duration: time.Since(start),
-		}, nil
+	// 4. 验证：Get("background") 对比请求值
+	currentOut, err := dbusCall(ctx, appearanceDest, appearancePath, methodAppearanceGet, "background")
+	current := ""
+	if err == nil {
+		current = parseGVariantString(currentOut)
 	}
 
-	current, _ := currentVariant.Value().(string)
 	verified := current == path
 
 	return &Result{
@@ -104,22 +95,13 @@ func (d *DdeWallpaper) Run(ctx context.Context, input map[string]interface{}) (*
 }
 
 func (d *DdeWallpaper) HealthCheck(ctx context.Context) error {
-	// 尝试获取当前壁纸（只读操作）
-	if d.conn == nil {
-		return fmt.Errorf("D-Bus connection not initialized")
-	}
-	obj := d.conn.Object(appearanceDest, appearancePath)
-	_, err := obj.GetProperty(propertyBackground)
+	// GetProperty 兜底：尝试 Get current theme
+	_, err := dbusCall(ctx, appearanceDest, appearancePath, methodAppearanceGet, "background")
 	if err != nil {
 		return fmt.Errorf("DDE Appearance service unavailable: %w", err)
 	}
 	return nil
 }
 
-// Close 关闭 D-Bus 连接
-func (d *DdeWallpaper) Close() error {
-	if d.conn != nil {
-		return d.conn.Close()
-	}
-	return nil
-}
+// Close 兼容接口（godbus 时代的 API,现在 noop）
+func (d *DdeWallpaper) Close() error { return nil }

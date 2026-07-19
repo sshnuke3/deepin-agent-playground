@@ -1,40 +1,38 @@
 // Package tools - dde_theme.go
 //
-// v0.3 Phase 2 补:主题切换（深色/浅色/自动）
+// v0.3 Phase 2 补:主题切换(走 gdbus 命令 + CommandExecutor 可注入)
 //
 // D-Bus: com.deepin.daemon.Appearance
-//   - SetCurrentTheme(theme)
-//   - GetCurrentTheme()
-//
-// 跟 teams/internal/tools/appearance.go 对齐接口，但走 godbus/dbus（playground 自己的风格）。
+//   - SetGtkTheme(string theme)
+//   - GetCurrentTheme() -> string
 package tools
 
 import (
 	"context"
 	"fmt"
 	"time"
-
-	"github.com/godbus/dbus/v5"
 )
 
-// D-Bus 服务常量（与 dde_wallpaper.go 一致）
+// 主题相关常量
 const (
+	methodSetGtkTheme    = appearanceInterface + ".SetGtkTheme"
+	methodGetTheme       = appearanceInterface + ".GetCurrentTheme"
 	methodSetCurrentTheme = appearanceInterface + ".SetCurrentTheme"
-	methodGetCurrentTheme = appearanceInterface + ".GetCurrentTheme"
 )
+
+// 合法主题名
+var validThemes = map[string]bool{
+	"deepin-dark":  true,
+	"deepin-light": true,
+	"deepin-auto":  true,
+}
 
 // DdeTheme 切换 DDE 主题。
-type DdeTheme struct {
-	conn *dbus.Conn
-}
+type DdeTheme struct{}
 
 // NewDdeTheme 创建 DDE 主题工具
 func NewDdeTheme() (*DdeTheme, error) {
-	conn, err := dbus.SessionBus()
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to session D-Bus: %w", err)
-	}
-	return &DdeTheme{conn: conn}, nil
+	return &DdeTheme{}, nil
 }
 
 func (d *DdeTheme) Name() string { return "dde_theme_set" }
@@ -54,41 +52,44 @@ func (d *DdeTheme) Run(ctx context.Context, input map[string]interface{}) (*Resu
 		}, fmt.Errorf("theme required")
 	}
 
-	// 校验合法主题名（防止无效值传 D-Bus）
-	switch theme {
-	case "deepin-dark", "deepin-light", "deepin-auto":
-		// OK
-	default:
+	if !validThemes[theme] {
 		return &Result{
 			Success: false, Error: fmt.Sprintf("invalid theme: %q", theme), ErrorType: "invalid_input",
 			Duration: time.Since(start),
 		}, nil
 	}
 
-	obj := d.conn.Object(appearanceDest, appearancePath)
-	err := obj.CallWithContext(ctx, methodSetCurrentTheme, 0, theme).Err
+	// 调用 SetGtkTheme（跟 v4 teams 保持一致 — 优先用 SetGtkTheme）
+	_, err := dbusCall(ctx, appearanceDest, appearancePath, methodSetGtkTheme, theme)
 	if err != nil {
-		return &Result{
-			Success: false, Error: err.Error(), ErrorType: "dbus_error",
-			Content: fmt.Sprintf("DDE SetCurrentTheme failed: %v", err),
-			Duration: time.Since(start),
-		}, nil
-	}
-
-	// 验证：调 GetCurrentTheme 读回对比
-	call := obj.CallWithContext(ctx, methodGetCurrentTheme, 0)
-	current := ""
-	if call.Err == nil && len(call.Body) > 0 {
-		if s, ok := call.Body[0].(string); ok {
-			current = s
+		// 失败时回退 SetCurrentTheme（某些 deepin 版本只有这个）
+		_, err2 := dbusCall(ctx, appearanceDest, appearancePath, methodSetCurrentTheme, theme)
+		if err2 != nil {
+			return &Result{
+				Success: false, Error: err.Error(), ErrorType: "dbus_error",
+				Content: fmt.Sprintf("DDE SetGtkTheme failed: %v (also tried SetCurrentTheme: %v)", err, err2),
+				Duration: time.Since(start),
+			}, nil
 		}
 	}
+
+	// 验证：GetCurrentTheme 读回对比
+	currentOut, err := dbusCall(ctx, appearanceDest, appearancePath, methodGetTheme)
+	current := ""
+	if err == nil {
+		current = parseGVariantString(currentOut)
+	}
 	verified := current == theme
+
+	modeNote := ""
+	if IsMockMode() {
+		modeNote = "（演示模式）"
+	}
 
 	return &Result{
 		Success:  true,
 		ExitCode: 0,
-		Content:  fmt.Sprintf("theme set to %s", theme),
+		Content:  fmt.Sprintf("theme set to %s%s", theme, modeNote),
 		Verified: verified,
 		Meta: map[string]interface{}{
 			"requested": theme,
@@ -99,21 +100,11 @@ func (d *DdeTheme) Run(ctx context.Context, input map[string]interface{}) (*Resu
 }
 
 func (d *DdeTheme) HealthCheck(ctx context.Context) error {
-	if d.conn == nil {
-		return fmt.Errorf("D-Bus connection not initialized")
-	}
-	obj := d.conn.Object(appearanceDest, appearancePath)
-	err := obj.CallWithContext(ctx, methodGetCurrentTheme, 0).Err
+	_, err := dbusCall(ctx, appearanceDest, appearancePath, methodGetTheme)
 	if err != nil {
 		return fmt.Errorf("DDE Appearance service unavailable: %w", err)
 	}
 	return nil
 }
 
-// Close 关闭 D-Bus 连接
-func (d *DdeTheme) Close() error {
-	if d.conn != nil {
-		return d.conn.Close()
-	}
-	return nil
-}
+func (d *DdeTheme) Close() error { return nil }

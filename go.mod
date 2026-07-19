@@ -2,10 +2,7 @@ module github.com/sshnuke3/daplayground
 
 go 1.22.2
 
-require (
-	github.com/cloudwego/eino v0.9.12
-	github.com/godbus/dbus/v5 v5.1.0
-)
+require github.com/cloudwego/eino v0.9.12
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect

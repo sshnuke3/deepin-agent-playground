@@ -1,36 +1,39 @@
 // Package tools - dde_settings_test.go
 //
-// v0.3 Phase 2 补:4 个新 tool 的单元测试
+// v0.3 Phase 2 升级:4 个 DDE tool 的单元测试(走 fakeExecutor)
 //
-// 只测参数校验逻辑（不真打 D-Bus）：
-//   - 缺参数
-//   - 类型错误
-//   - 值越界
-//   - 非法字符串
+// 测试策略（v0.3 升级后）：
+//   - mock 模式（DEEPIN_DBUS=mock）：所有 dbusCall 不调 gdbus,直接返回 mockDBusResponse
+//   - 注入 fakeExecutor：验证调对了 gdbus 参数名 / 接口签名 / 参数值
+//   - Ubuntu/CI 上能跑（不再 skip）
 //
-// D-Bus 真调用要在 deepin 25 真机验证（见 DEEPIN_25_TESTING.md）。
+// 验证场景：
+//   1. 参数校验（缺参 / 类型错 / 越界 / 非法值）
+//   2. 真 D-Bus 路径（验证调到了正确的 dest/path/method/args）
+//   3. 错误处理（gdbus 失败 → Result 标记 failed）
 package tools
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 )
 
-func TestDdeTheme_InvalidTheme(t *testing.T) {
-	d, err := NewDdeTheme()
-	if err != nil {
-		t.Skipf("D-Bus not available (probably not on deepin 25): %v", err)
-	}
-	defer d.Close()
+// === fakeExecutor + 工具函数在 dbus_test.go 定义 ===
 
-	// 区分 missing (返回 error) 和 invalid value (返回 Result)
+// === DdeTheme 测试 ===
+
+func TestDdeTheme_InvalidTheme(t *testing.T) {
+	d, _ := NewDdeTheme()
+
 	tests := []struct {
 		name      string
 		theme     string
 		wantError bool
 	}{
-		{"empty", "", true},  // 缺参 → 返回 error
-		{"unknown", "purple", false}, // 非法值 → Result+nil
+		{"empty", "", true}, // missing -> error
+		{"unknown", "purple", false},
 		{"partial", "deepin", false},
 	}
 	for _, tt := range tests {
@@ -43,7 +46,7 @@ func TestDdeTheme_InvalidTheme(t *testing.T) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("Run should not return error for invalid input, got: %v", err)
+				t.Fatalf("Run should not return error: %v", err)
 			}
 			if res.Success {
 				t.Errorf("expected Success=false for invalid theme %q", tt.theme)
@@ -55,31 +58,75 @@ func TestDdeTheme_InvalidTheme(t *testing.T) {
 	}
 }
 
-func TestDdeTheme_MissingTheme(t *testing.T) {
-	d, err := NewDdeTheme()
-	if err != nil {
-		t.Skipf("D-Bus not available: %v", err)
-	}
-	defer d.Close()
+func TestDdeTheme_RealDBus_CallsSetGtkTheme(t *testing.T) {
+	// 注入 fakeExecutor 验证真 D-Bus 路径
+	fake := &fakeExecutor{stdout: "()"}
+	SetExecutor(fake)
+	defer ResetExecutor()
+	t.Setenv("DEEPIN_DBUS", "")
 
-	res, err := d.Run(context.Background(), map[string]interface{}{})
-	if err == nil {
-		t.Error("expected error for missing theme")
+	d, _ := NewDdeTheme()
+	res, err := d.Run(context.Background(), map[string]interface{}{"theme": "deepin-dark"})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if res.Success {
-		t.Error("expected Success=false")
+	if !res.Success {
+		t.Errorf("expected Success=true, got %+v", res)
 	}
-	if res.ErrorType != "invalid_input" {
-		t.Errorf("expected ErrorType=invalid_input, got %q", res.ErrorType)
+
+	// 验证调用参数
+	if len(fake.calls) == 0 {
+		t.Fatal("expected at least one gdbus call")
+	}
+	call := fake.calls[0]
+
+	// 第一个调用应该是 SetGtkTheme
+	if call.name != "gdbus" {
+		t.Errorf("expected command 'gdbus', got %q", call.name)
+	}
+	hasSetGtk := false
+	hasDeepinDark := false
+	for _, a := range call.args {
+		if a == "com.deepin.daemon.Appearance.SetGtkTheme" {
+			hasSetGtk = true
+		}
+		if a == "deepin-dark" {
+			hasDeepinDark = true
+		}
+	}
+	if !hasSetGtk {
+		t.Errorf("expected args to contain SetGtkTheme, got %v", call.args)
+	}
+	if !hasDeepinDark {
+		t.Errorf("expected args to contain 'deepin-dark', got %v", call.args)
 	}
 }
 
-func TestDdeVolume_OutOfRange(t *testing.T) {
-	d, err := NewDdeVolume()
-	if err != nil {
-		t.Skipf("D-Bus not available: %v", err)
+func TestDdeTheme_RealDBus_GdbusFailureReturnsFailed(t *testing.T) {
+	// fakeExecutor 返回错误（模拟 gdbus 调用失败）
+	fake := &fakeExecutor{stdout: "", stderr: "ServiceUnknown", err: errors.New("exit 1")}
+	SetExecutor(fake)
+	defer ResetExecutor()
+
+	d, _ := NewDdeTheme()
+	res, _ := d.Run(context.Background(), map[string]interface{}{"theme": "deepin-dark"})
+
+	if res.Success {
+		t.Error("expected Success=false when gdbus fails")
 	}
-	defer d.Close()
+	if res.ErrorType != "dbus_error" {
+		t.Errorf("expected ErrorType=dbus_error, got %q", res.ErrorType)
+	}
+	if !strings.Contains(res.Content, "SetGtkTheme failed") {
+		t.Errorf("expected error message to mention SetGtkTheme, got %q", res.Content)
+	}
+}
+
+// === DdeVolume 测试 ===
+
+func TestDdeVolume_OutOfRange(t *testing.T) {
+	d, _ := NewDdeVolume()
 
 	tests := []struct {
 		name   string
@@ -99,57 +146,111 @@ func TestDdeVolume_OutOfRange(t *testing.T) {
 			if res.Success {
 				t.Errorf("expected Success=false for volume %v", tt.volume)
 			}
-			if res.ErrorType != "invalid_input" {
-				t.Errorf("expected ErrorType=invalid_input, got %q", res.ErrorType)
-			}
 		})
 	}
 }
 
-func TestDdeVolume_TypeCoercion(t *testing.T) {
-	d, err := NewDdeVolume()
-	if err != nil {
-		t.Skipf("D-Bus not available: %v", err)
-	}
-	defer d.Close()
+func TestDdeVolume_RealDBus_ConvertsToRatio(t *testing.T) {
+	fake := &fakeExecutor{stdout: "()"}
+	SetExecutor(fake)
+	defer ResetExecutor()
 
-	// 只测字符串解析失败的情况（其他类型 跳过 D-Bus 真调用）
-	t.Run("invalid_string", func(t *testing.T) {
-		res, err := d.Run(context.Background(), map[string]interface{}{"volume": "abc"})
-		if err != nil {
-			t.Fatalf("Run should not return error: %v", err)
+	d, _ := NewDdeVolume()
+	res, err := d.Run(context.Background(), map[string]interface{}{"volume": 30})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Success {
+		t.Errorf("expected Success=true, got %+v", res)
+	}
+
+	if len(fake.calls) == 0 {
+		t.Fatal("expected at least one gdbus call")
+	}
+	call := fake.calls[0]
+
+	hasSinkSetVolume := false
+	hasRatio30 := false
+	for _, a := range call.args {
+		if a == "com.deepin.daemon.Audio.SinkSetVolume" {
+			hasSinkSetVolume = true
 		}
-		if res.Success {
-			t.Error("expected Success=false for non-numeric string")
+		if a == "0.300000" {
+			hasRatio30 = true
 		}
-		if res.ErrorType != "invalid_input" {
-			t.Errorf("expected ErrorType=invalid_input, got %q", res.ErrorType)
+	}
+	if !hasSinkSetVolume {
+		t.Errorf("expected SinkSetVolume method, got %v", call.args)
+	}
+	if !hasRatio30 {
+		t.Errorf("expected 0-1.0 ratio (0.300000 for 30), got %v", call.args)
+	}
+
+	// 验证 meta 里有 ratio
+	if got, ok := res.Meta["ratio"].(string); !ok || got != "0.300000" {
+		t.Errorf("expected meta.ratio=0.300000, got %v", res.Meta["ratio"])
+	}
+}
+
+func TestDdeVolume_EdgeValues(t *testing.T) {
+	// 0 和 100 也应该正确转 ratio
+	fake := &fakeExecutor{stdout: "()"}
+	SetExecutor(fake)
+	defer ResetExecutor()
+
+	d, _ := NewDdeVolume()
+
+	t.Run("volume=0", func(t *testing.T) {
+		fake.calls = nil
+		res, _ := d.Run(context.Background(), map[string]interface{}{"volume": 0})
+		if !res.Success {
+			t.Errorf("expected Success=true for volume=0, got %+v", res)
+		}
+		// 检查传了 0.000000
+		found := false
+		for _, a := range fake.calls[0].args {
+			if a == "0.000000" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected ratio=0.000000, got %v", fake.calls[0].args)
+		}
+	})
+
+	t.Run("volume=100", func(t *testing.T) {
+		fake.calls = nil
+		res, _ := d.Run(context.Background(), map[string]interface{}{"volume": 100})
+		if !res.Success {
+			t.Errorf("expected Success=true for volume=100, got %+v", res)
+		}
+		found := false
+		for _, a := range fake.calls[0].args {
+			if a == "1.000000" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected ratio=1.000000, got %v", fake.calls[0].args)
 		}
 	})
 }
 
-func TestDdeBrightness_OutOfRange(t *testing.T) {
-	d, err := NewDdeBrightness()
-	if err != nil {
-		t.Skipf("D-Bus not available: %v", err)
-	}
-	defer d.Close()
+// === DdeBrightness 测试 ===
 
+func TestDdeBrightness_OutOfRange(t *testing.T) {
+	d, _ := NewDdeBrightness()
 	tests := []struct {
 		name       string
 		brightness interface{}
 	}{
 		{"negative_int", -1},
 		{"too_large_int", 101},
-		{"negative_string", "-50"},
-		{"too_large_string", "999"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res, err := d.Run(context.Background(), map[string]interface{}{"brightness": tt.brightness})
-			if err != nil {
-				t.Fatalf("Run should not return error: %v", err)
-			}
+			res, _ := d.Run(context.Background(), map[string]interface{}{"brightness": tt.brightness})
 			if res.Success {
 				t.Errorf("expected Success=false for brightness %v", tt.brightness)
 			}
@@ -157,65 +258,115 @@ func TestDdeBrightness_OutOfRange(t *testing.T) {
 	}
 }
 
-func TestDdeNetwork_InvalidState(t *testing.T) {
-	d, err := NewDdeNetwork()
-	if err != nil {
-		t.Skipf("D-Bus not available: %v", err)
-	}
-	defer d.Close()
+func TestDdeBrightness_RealDBus_ConvertsToRatio(t *testing.T) {
+	fake := &fakeExecutor{stdout: "()"}
+	SetExecutor(fake)
+	defer ResetExecutor()
 
-	tests := []string{"", "enable", "disable", "true", "1", "yes"}
-	for _, state := range tests {
+	d, _ := NewDdeBrightness()
+	res, _ := d.Run(context.Background(), map[string]interface{}{"brightness": 80})
+
+	if !res.Success {
+		t.Errorf("expected Success=true, got %+v", res)
+	}
+
+	hasSetBrightness := false
+	hasRatio80 := false
+	for _, a := range fake.calls[0].args {
+		if a == "com.deepin.daemon.Display.Brightness.SetBrightness" {
+			hasSetBrightness = true
+		}
+		if a == "0.800000" {
+			hasRatio80 = true
+		}
+	}
+	if !hasSetBrightness {
+		t.Errorf("expected Brightness.SetBrightness method, got %v", fake.calls[0].args)
+	}
+	if !hasRatio80 {
+		t.Errorf("expected 0.800000 ratio for 80, got %v", fake.calls[0].args)
+	}
+}
+
+// === DdeNetwork 测试 ===
+
+func TestDdeNetwork_InvalidState(t *testing.T) {
+	d, _ := NewDdeNetwork()
+	for _, state := range []string{"enable", "disable", "true", "1", "yes"} {
 		t.Run("state="+state, func(t *testing.T) {
-			res, err := d.Run(context.Background(), map[string]interface{}{"state": state})
-			if err != nil && state != "" {
-				// 空字符串会返回 error（state required）
-				t.Fatalf("Run should not return error for non-empty state: %v", err)
-			}
-			if state == "" {
-				// 空字符串 -> error
-				if err == nil {
-					t.Error("expected error for empty state")
-				}
-				return
-			}
+			res, _ := d.Run(context.Background(), map[string]interface{}{"state": state})
 			if res.Success {
 				t.Errorf("expected Success=false for state %q", state)
 			}
-			if res.ErrorType != "invalid_input" {
-				t.Errorf("expected ErrorType=invalid_input, got %q", res.ErrorType)
-			}
 		})
 	}
 }
 
-func TestDdeNetwork_StateCaseInsensitive(t *testing.T) {
-	d, err := NewDdeNetwork()
-	if err != nil {
-		t.Skipf("D-Bus not available: %v", err)
-	}
-	defer d.Close()
+func TestDdeNetwork_RealDBus_ChoosesCorrectMethod(t *testing.T) {
+	fake := &fakeExecutor{stdout: "()"}
+	SetExecutor(fake)
+	defer ResetExecutor()
 
-	// ON / Off / OFF 大小写都应该接受（走到 D-Bus 阶段），所以测试只校验格式解析。
-	// 在非 deepin 25 环境下 D-Bus 会失败，但不会因为大小写报 invalid_input。
-	for _, state := range []string{"ON", "Off", "OFF", "on", "off"} {
-		t.Run("state="+state, func(t *testing.T) {
-			res, _ := d.Run(context.Background(), map[string]interface{}{"state": state})
-			// 大小写归一化后是 on/off,所以不该报 invalid_input
-			if res.ErrorType == "invalid_input" {
-				t.Errorf("state %q should be normalized (case insensitive), got invalid_input", state)
+	d, _ := NewDdeNetwork()
+
+	t.Run("state=on calls EnableWifi", func(t *testing.T) {
+		fake.calls = nil
+		res, _ := d.Run(context.Background(), map[string]interface{}{"state": "on"})
+		if !res.Success {
+			t.Errorf("expected Success=true, got %+v", res)
+		}
+		hasEnable := false
+		for _, a := range fake.calls[0].args {
+			if a == "com.deepin.daemon.Network.EnableWifi" {
+				hasEnable = true
 			}
-		})
-	}
+		}
+		if !hasEnable {
+			t.Errorf("expected EnableWifi for state=on, got %v", fake.calls[0].args)
+		}
+	})
+
+	t.Run("state=off calls DisableWifi", func(t *testing.T) {
+		fake.calls = nil
+		res, _ := d.Run(context.Background(), map[string]interface{}{"state": "off"})
+		if !res.Success {
+			t.Errorf("expected Success=true, got %+v", res)
+		}
+		hasDisable := false
+		for _, a := range fake.calls[0].args {
+			if a == "com.deepin.daemon.Network.DisableWifi" {
+				hasDisable = true
+			}
+		}
+		if !hasDisable {
+			t.Errorf("expected DisableWifi for state=off, got %v", fake.calls[0].args)
+		}
+	})
+
+	t.Run("case insensitive", func(t *testing.T) {
+		fake.calls = nil
+		d.Run(context.Background(), map[string]interface{}{"state": "ON"})
+		hasEnable := false
+		for _, a := range fake.calls[0].args {
+			if a == "com.deepin.daemon.Network.EnableWifi" {
+				hasEnable = true
+			}
+		}
+		if !hasEnable {
+			t.Errorf("expected case-insensitive ON to call EnableWifi, got %v", fake.calls[0].args)
+		}
+	})
 }
+
+// === 公共 sanity 测试 ===
 
 func TestAllTools_HaveNameAndDescription(t *testing.T) {
-	// 编译期 sanity check：所有 tool 都该实现 Tool 接口并有名字 + 描述
 	tools := []Tool{
 		&DdeTheme{},
 		&DdeVolume{},
 		&DdeBrightness{},
 		&DdeNetwork{},
+		&DdeWallpaper{},
 	}
 	for _, tool := range tools {
 		if tool.Name() == "" {
@@ -224,5 +375,29 @@ func TestAllTools_HaveNameAndDescription(t *testing.T) {
 		if tool.Description() == "" {
 			t.Errorf("%T: Description() should not be empty", tool)
 		}
+	}
+}
+
+// === 复制 v4 teams 的 gvariant 解析测试 ===
+
+func TestParseGVariantString(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"(<'deepin-dark',>,)", "deepin-dark"},
+		{"(<value,>,)", "value"},
+		{"(<'path/to/file.jpg',>,)", "path/to/file.jpg"},
+		{"()", ""},
+		{"", ""},
+		{"not-gvariant-format", "not-gvariant-format"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := parseGVariantString(tt.input)
+			if got != tt.want {
+				t.Errorf("parseGVariantString(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }

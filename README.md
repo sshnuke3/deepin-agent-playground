@@ -2,11 +2,13 @@
 
 > 把 deepin 25 变成 Sutton 路线"option 学习"的真实环境
 >
-> **版本**：v0.3 MVP · 2026-07-18（Phase 2：Eino 接入 + 与 deepin-agent-teams 统一）
+> **版本**：v0.3 MVP · 2026-07-18（Phase 2：Eino 接入 + 与 deepin-agent-teams 统一）· 2026-07-19 D-Bus 重构：godbus → gdbus 命令包装
+
+> **状态**：Phase 2 已实现 · 7 个 DDE/系统 tool（走 gdbus 命令 + CommandExecutor 可注入） + 双模式 agent（Eino / Legacy） + 33 个单测 0 跳过
 >
-> **技术栈**：Go 1.22.2 · Eino v0.9.12 ADK · godbus/dbus · 玲珑包
+> **技术栈**：Go 1.22.2 · Eino v0.9.12 ADK · gdbus 命令包装 + CommandExecutor 可注入 · 玲珑包
 >
-> **状态**：Phase 2 已实现 · 7 个 DDE/系统 tool + 双模式 agent（Eino / Legacy） + 完整测试
+> **状态**：Phase 2 已实现 · 7 个 DDE/系统 tool + 双模式 agent（Eino / Legacy） + 33 个单测 0 跳过
 
 ## 与 deepin-agent-teams 版本对齐
 
@@ -51,16 +53,25 @@ make linglong
 deepin-agent-playground/
 ├── cmd/playground/main.go              # 入口
 ├── internal/
-│   ├── agent/core.go                   # Agent 主循环（reasoning + acting）
+│   ├── agent/
+│   │   ├── core.go                     # Legacy agent 主循环（关键词拆任务）
+│   │   └── eino_agent.go               # Eino v0.9.12 ADK agent
 │   ├── tools/
-│   │   ├── base.go                     # Tool 抽象基类 + Result 统一结构
-│   │   ├── ll_cli.go                   # 玲珑包适配（install / run）
-│   │   ├── filesystem.go               # 文件整理（机器可读反馈）
-│   │   └── dde_wallpaper.go            # DDE 壁纸（D-Bus via godbus）
+│   │   ├── base.go                     # Tool 接口 + Result 结构
+│   │   ├── adapter.go                  # Tool ↔ eino Tool 适配器
+│   │   ├── dbus.go                     # gdbus 通用调用层 + CommandExecutor 可注入
+│   │   ├── gvariant.go                 # GVariant 字符串解析
+│   │   ├── ll_cli.go                   # 玲珑包工具（Phase 1）
+│   │   ├── filesystem.go               # 文件整理（Phase 1）
+│   │   ├── dde_wallpaper.go            # DDE 壁纸（Phase 1）
+│   │   ├── dde_theme.go                # DDE 主题（Phase 2）
+│   │   ├── dde_volume.go               # DDE 音量（Phase 2）
+│   │   ├── dde_brightness.go           # DDE 亮度（Phase 2）
+│   │   └── dde_network.go              # DDE WiFi（Phase 2）
 │   ├── metrics/collector.go            # 训练数据采集
 │   └── config/config.go                # 配置加载
 ├── examples/demo_install_organize_wallpaper.go  # e2e demo
-├── tests/                              # 测试
+├── tests/                              # 测试（当前为空 · 单测在 internal/tools/）
 ├── Makefile                            # 构建脚本
 ├── linglong.yaml                       # 玲珑包配置
 ├── go.mod / go.sum
@@ -147,14 +158,14 @@ deepin 25 + 玲珑包 + DDE 是国内桌面 OS 里**最有 RL 训练潜力**的�
 | LLM 框架 | `cloudwego/eino` | CloudWeGo（字节） |
 | RPC（可选） | `cloudwego/kitex` | CloudWeGo |
 | Ollama 客户端 | `eino-ext/components/model/ollama` | Eino 官方扩展 |
-| D-Bus | `github.com/godbus/dbus/v5` | deepin 团队同款 |
+| D-Bus | gdbus 命令包装 + `CommandExecutor` 可注入 | 跟 deepin-agent-teams v4 一致 |
 | 玲珑包 | `os/exec` 调 `ll-cli` | 玲珑（deepin） |
 | 部署 | `ll-builder build` 打包 .layer | 玲珑（deepin） |
 
 **关键决策**：
 
 - ✅ 选 **Eino 而非自己写**——避免重复造轮子 · 直接复用字节生产级基础设施
-- ✅ 选 **godbus 而非 cgo dbus**——纯 Go 实现，跨平台好编译
+- ✅ 选 **gdbus 命令包装而非 godbus CGO 库**——零 CGO 依赖 + 测试可注入 Executor + 跟 deepin 社区文档一致
 - ❌ 不选 Python LangChain——同语言生态对齐更重要
 - ❌ 不选 LangChain Go（不存在）——Eino 就是 Go 版的 LangChain + Google ADK
 
@@ -232,6 +243,24 @@ type Tool interface {
 **决策 4：Graph Checkpoint 做长程 option**
 
 Eino 的 Graph Checkpoint 支持 agent 任务断点续跑——这正好对应 Sutton 第三步"option 跨会话"的能力。
+
+### D-Bus 实现（v0.3 起统一为 gdbus）
+
+v0.2 时期的 playground 走 `github.com/godbus/dbus/v5`（CGO 库），v0.3 重构为 **gdbus 命令包装**（跟 [deepin-agent-teams v4](https://github.com/sshnuke3/deepin-agent-teams) 对齐）：
+
+- 全部 tool 调用 `dbusCall(ctx, dest, path, method, args...)`
+- `CommandExecutor` 接口注入让测试在 Ubuntu 上能验证接口签名
+- 零 CGO 依赖 · 跟 deepin 官方文档示例一致 · 跟 teams v4 共享同一套 dbus.go 风格
+
+```go
+// 调深色主题
+dbusCall(ctx,
+    "com.deepin.daemon.Appearance",
+    "/com/deepin/daemon/Appearance",
+    "com.deepin.daemon.Appearance.SetGtkTheme",
+    "deepin-dark",
+)
+```
 
 ---
 

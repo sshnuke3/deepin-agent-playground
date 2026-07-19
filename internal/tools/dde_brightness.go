@@ -1,11 +1,11 @@
 // Package tools - dde_brightness.go
 //
-// v0.3 Phase 2 补:屏幕亮度调节
+// v0.3 Phase 2 补:屏幕亮度调节(走 gdbus 命令 + CommandExecutor 可注入)
 //
 // D-Bus: com.deepin.daemon.Display
-//   - SetBrightness(double brightness)   // brightness: 0.0 - 1.0
+//   - Brightness.SetBrightness(double brightness)   // 0.0 - 1.0
 //
-// 输入用 0-100 整数，内部转 0.0-1.0 ratio。
+// 输入用 0-100 整数,内部转 0.0-1.0 ratio。
 package tools
 
 import (
@@ -13,33 +13,24 @@ import (
 	"fmt"
 	"strconv"
 	"time"
-
-	"github.com/godbus/dbus/v5"
 )
 
 // 亮度 D-Bus 常量
-// 注意：deepin 不同版本服务名可能不同（com.deepin.daemon.Display 或 .Power.Display）。
-// 先写 Display，跟 dde_wallpaper 保持一致的 dest 风格；真机跑挂时再改 Power。
 const (
-	displayDest      = "com.deepin.daemon.Display"
-	displayPath      = "/com/deepin/daemon/Display"
-	displayInterface = "com.deepin.daemon.Display"
-	methodSetBrightness = displayInterface + ".SetBrightness"
-	propertyBrightness = displayInterface + ".Brightness" // 只读 property
+	displayDest           = "com.deepin.daemon.Display"
+	displayPath           = "/com/deepin/daemon/Display"
+	displayInterface      = "com.deepin.daemon.Display"
+	brightnessSubiface    = "Brightness"
+	methodSetBrightness   = displayInterface + "." + brightnessSubiface + ".SetBrightness"
+	methodGetBrightness   = displayInterface + "." + brightnessSubiface + ".GetBrightness"
 )
 
 // DdeBrightness 调节屏幕亮度。
-type DdeBrightness struct {
-	conn *dbus.Conn
-}
+type DdeBrightness struct{}
 
 // NewDdeBrightness 创建 DDE 亮度工具
 func NewDdeBrightness() (*DdeBrightness, error) {
-	conn, err := dbus.SessionBus()
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to session D-Bus: %w", err)
-	}
-	return &DdeBrightness{conn: conn}, nil
+	return &DdeBrightness{}, nil
 }
 
 func (d *DdeBrightness) Name() string { return "dde_brightness_set" }
@@ -83,10 +74,9 @@ func (d *DdeBrightness) Run(ctx context.Context, input map[string]interface{}) (
 		}, nil
 	}
 
-	ratio := float64(brightness) / 100.0
+	ratio := fmt.Sprintf("%f", float64(brightness)/100.0)
 
-	obj := d.conn.Object(displayDest, displayPath)
-	err := obj.CallWithContext(ctx, methodSetBrightness, 0, ratio).Err
+	_, err := dbusCall(ctx, displayDest, displayPath, methodSetBrightness, ratio)
 	if err != nil {
 		return &Result{
 			Success: false, Error: err.Error(), ErrorType: "dbus_error",
@@ -95,24 +85,30 @@ func (d *DdeBrightness) Run(ctx context.Context, input map[string]interface{}) (
 		}, nil
 	}
 
-	// 验证：读 Brightness property
-	verified := false
+	// 验证：GetBrightness 读回
+	currentOut, err := dbusCall(ctx, displayDest, displayPath, methodGetBrightness)
 	current := -1
-	if v, err := obj.GetProperty(propertyBrightness); err == nil {
-		// Brightness 通常返回 double (0.0-1.0)
-		if f, ok := v.Value().(float64); ok {
+	if err == nil {
+		// 假设返回 double（0.0-1.0），可能格式：(0.500000,)
+		if f := parseDoubleFromGVariant(currentOut); f >= 0 {
 			current = int(f * 100)
-			verified = current == brightness
 		}
+	}
+	verified := current == brightness
+
+	modeNote := ""
+	if IsMockMode() {
+		modeNote = "（演示模式）"
 	}
 
 	return &Result{
 		Success:  true,
 		ExitCode: 0,
-		Content:  fmt.Sprintf("brightness set to %d", brightness),
+		Content:  fmt.Sprintf("brightness set to %d%s", brightness, modeNote),
 		Verified: verified,
 		Meta: map[string]interface{}{
 			"requested": brightness,
+			"ratio":     ratio,
 			"current":   current,
 		},
 		Duration: time.Since(start),
@@ -120,20 +116,15 @@ func (d *DdeBrightness) Run(ctx context.Context, input map[string]interface{}) (
 }
 
 func (d *DdeBrightness) HealthCheck(ctx context.Context) error {
-	if d.conn == nil {
-		return fmt.Errorf("D-Bus connection not initialized")
+	if IsMockMode() {
+		return nil
 	}
-	obj := d.conn.Object(displayDest, displayPath)
-	_, err := obj.GetProperty(propertyBrightness)
+	// GetBrightness 是只读,可以用来验证服务可用
+	_, err := dbusCall(context.Background(), displayDest, displayPath, methodGetBrightness)
 	if err != nil {
 		return fmt.Errorf("DDE Display service unavailable: %w", err)
 	}
 	return nil
 }
 
-func (d *DdeBrightness) Close() error {
-	if d.conn != nil {
-		return d.conn.Close()
-	}
-	return nil
-}
+func (d *DdeBrightness) Close() error { return nil }
